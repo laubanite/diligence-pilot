@@ -4,7 +4,7 @@ load_dotenv()
 import app  # 导入你正在写的 app.py，里面已经有 extract_text_from_pdf 和 extract_financials
 
 # 读取本地PDF文件，模拟上传
-with open("test_report.pdf", "rb") as f:
+with open(r"E:\投研agent\diligence-pilot\test_report.pdf", "rb") as f:
     # 注意：extract_text_from_pdf 期望的参数是类似 Streamlit 上传文件的对象
     # 这里我们需要模拟一个对象，最简单的做法是直接调用 pymupdf 的底层逻辑
     # 但因为我们还没有上传对象，直接复制 app 里 extract_text_from_pdf 的内部逻辑更稳妥

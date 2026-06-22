@@ -1,304 +1,420 @@
-import streamlit as st
-import os
-import pymupdf
-import pandas as pd
-import plotly.express as px
-import requests
-import json
+"""
+DiligencePilot - 硬科技AI投研助手
+主入口模块（UI 重构版）
+"""
 import time
+
+import streamlit as st
 from dotenv import load_dotenv
 
-# 加载环境变量
+from config import PAGE_TITLE, SPINNER_TEXT
+from pdf_utils import extract_text_from_pdf
+from analysis_nodes import (
+    extract_financials,
+    detect_anomalies,
+    extract_highlights,
+    industry_analysis,
+    investment_logic,
+    generate_communication_points,
+)
+from financial_ratios import calculate_ratios
+from ui_components import (
+    render_financial_tab,
+    render_highlights_tab,
+    render_anomalies_tab,
+    render_industry_tab,
+    render_logic_tab,
+    render_communication_tab,
+)
+
 load_dotenv()
 
-st.set_page_config(page_title="DiligencePilot Demo | 硬科技AI投研助手", layout="wide")
+# ── 页面配置 ──
+st.set_page_config(page_title=PAGE_TITLE, layout="wide")
 
-st.title("DiligencePilot Demo | 硬科技AI投研助手")
-st.subheader("聚焦半导体、新能源、高端制造 · 7维投资逻辑框架")
+# ── 状态初始化 ──
+if "page" not in st.session_state:
+    st.session_state.page = "home"
+if "tab_index" not in st.session_state:
+    st.session_state.tab_index = 0
 
-def extract_text_from_pdf(uploaded_file):
-    """
-    从前端上传的 PDF 文件读取纯文本。
-    """
-    try:
-        # Pymupdf 接受二进制流并解析
-        doc = pymupdf.open(stream=uploaded_file.read(), filetype="pdf")
-        full_text = ""
-        for i, page in enumerate(doc):
-            text = page.get_text()
-            full_text += f"\n\n[page_{i+1}]\n{text}"
-        return full_text.strip()
-    except Exception as e:
-        return f"PDF解析失败: {str(e)}"
-
-def call_llm(system_prompt, user_prompt, json_mode=False):
-    """
-    通用大模型请求函数。直接通过 requests 发送 HTTP POST。
-    """
-    base_url = os.getenv("LLM_BASE_URL", "https://api.deepseek.com")
-    api_key = os.getenv("LLM_API_KEY", "")
-    model = os.getenv("LLM_MODEL", "deepseek-v4-flash")
-    
-    url = f"{base_url}/v1/chat/completions"
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}"
-    }
-
-    if json_mode:
-        system_prompt += "\n只返回合法JSON，不要任何其他文字。"
-
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ],
-        "temperature": 0.1,
-        "max_tokens": 4096
-    }
-
-    try:
-        response = requests.post(url, headers=headers, json=payload, timeout=90)
-        
-        print("===== API DEBUG =====")
-        print("Status Code:", response.status_code)
-        print("Response Body:", response.text[:500])
-        print("=====================")
-        
-        response.raise_for_status() # 检测非200状态码
-        result = response.json()
-        return result["choices"][0]["message"]["content"]
-    except Exception as e:
-        return f"LLM调用出错: {str(e)}"
-
-def extract_financials(full_text):
-    """
-    分析节点一：从报告全文中提取3年核心财务数据。
-    """
-    system_prompt = """你是一位硬科技赛道财务分析师。从以下尽调报告中提取近三个完整财年的核心财务数据。返回严格的JSON，不要任何解释。
-JSON格式：
-{
-  "years": ["2023","2024","2025"],
-  "revenue": [数字,数字,数字],
-  "gross_margin": [百分比数字,数字,数字],
-  "rd_expense": [数字,数字,数字],
-  "rd_capitalization_rate": [百分比数字,数字,数字],
-  "net_profit": [数字,数字,数字],
-  "operating_cash_flow": [数字,数字,数字],
-  "capex": [数字,数字,数字],
-  "accounts_receivable": [数字,数字,数字],
-  "inventory": [数字,数字,数字],
-  "government_subsidy": [数字,数字,数字],
-  "revenue_top5_customer_share": [百分比数字,数字,数字]
+# ── Custom CSS 注入 ──
+CSS = """
+<style>
+/* ===== 全局 ===== */
+html, body, .stApp {
+    background-color: #f5f6f8 !important;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
 }
-特殊说明：关于"rd_capitalization_rate"（研发资本化率）：请先尝试从报告中提取“研发费用资本化金额”和“总研发投入”（或“研发费用合计”）。如果两项都提取到，且总研发投入不为零，请计算 资本化金额 / 总研发投入 * 100 作为百分比填入；如果只提取到费用化研发支出，没有资本化金额，或者完全没有研发数据，该字段必须填 null，严禁编造。
 
-未找到的字段填null。只返回JSON。所有数字必须来自报告，计算逻辑需明确，不要使用外部知识。"""
-    
-    user_prompt = full_text
-    
-    # 强制开启 json_mode
-    response_text = call_llm(system_prompt, user_prompt, json_mode=True)
-    
-    # 防呆解析 JSON
-    try:
-        if response_text.startswith("LLM调用出错"):
-            raise ValueError(response_text)
-            
-        # 尝试清洗返回的文本（有时候大模型可能会带上 markdown 也就是 ```json...```）
-        clean_text = response_text.strip()
-        if clean_text.startswith("```json"):
-            clean_text = clean_text[7:]
-        if clean_text.startswith("```"):
-            clean_text = clean_text[3:]
-        if clean_text.endswith("```"):
-            clean_text = clean_text[:-3]
-            
-        return json.loads(clean_text.strip()), response_text
-    except Exception as e:
-        print(f"JSON解析失败: {e}\n原始返回内容: \n{response_text}")
-        return {}, response_text
+/* ===== 背景山形线 ===== */
+.stApp::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1440 800'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%23e8ecf1'/%3E%3Cstop offset='1' stop-color='%23f5f6f8'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath d='M0,600 C200,550 400,650 600,580 S900,500 1200,560 S1400,620 1440,600 L1440,800 L0,800 Z' fill='url(%23g)'/%3E%3Cpath d='M0,650 C300,580 500,700 800,630 S1100,550 1440,640 L1440,800 L0,800 Z' fill='%23dce1e8' opacity='0.4'/%3E%3Cpath d='M0,700 C400,640 700,760 1000,680 S1300,600 1440,670 L1440,800 L0,800 Z' fill='%23caced6' opacity='0.25'/%3E%3C/svg%3E");
+    background-size: cover;
+    background-position: center bottom;
+    background-repeat: no-repeat;
+}
 
-def detect_anomalies(full_text, financial_json_str):
-    """
-    分析节点二：财务与经营异常检测。
-    """
-    system_prompt = """你是PE硬科技尽调专家。基于财务数据和报告全文，找出最多3个最显著的财务或经营异常信号。优先关注：
-- 收入质量：应收增速远超收入增速；大客户依赖度过高（>50%）。
-- 毛利率异常：剧烈波动，与行业技术成熟度不符。
-- 研发资本化：资本化率过高（>50%），或研发投入与核心技术产出不匹配。
-- 产能与资产：新增产能资本开支异常，固定资产周转率下降但无合理解释。
-- 补贴依赖：政府补助占净利润比例过高（>50%），或补贴政策即将到期。
-- 现金流：净利润为正但经营现金流持续为负。
+/* ===== 首页内容容器 ===== */
+.home-container {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 90vh;
+    text-align: center;
+    padding: 2rem 1rem;
+}
 
-对每个异常严格按以下格式输出，不要输出任何其他内容：
-**异常点1**
-- 异常描述：（一句话）
-- 数据对比：（具体年份和数字）
-- 原文依据：（引用报告原文1-2句，标明页码如[page_8]）
-- 风险等级：高/中
+/* ===== Logo 占位 ===== */
+.logo-placeholder {
+    font-size: 3rem;
+    font-weight: 300;
+    letter-spacing: 0.3em;
+    color: #b0b7c3;
+    margin-bottom: 1.2rem;
+    text-transform: uppercase;
+    user-select: none;
+}
 
-**异常点2**
-..."""
+/* ===== 大号标语 ===== */
+.slogan {
+    font-size: clamp(2rem, 5vw, 3.2rem);
+    font-weight: 700;
+    color: #1a1d23;
+    margin-bottom: 2.5rem;
+    line-height: 1.2;
+    letter-spacing: -0.02em;
+}
 
-    user_prompt = f"报告全文：{full_text}\n\n提取的财务数据：{financial_json_str}"
-    
-    response_text = call_llm(system_prompt, user_prompt, json_mode=False)
-    return response_text
+/* ===== 一体化胶囊卡片 ===== */
+.capsule-card {
+    display: flex;
+    align-items: center;
+    background: #ffffff;
+    border-radius: 60px;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.08), 0 2px 8px rgba(0,0,0,0.04);
+    padding: 4px 4px 4px 24px;
+    margin: 0 auto;
+    width: 100%;
+    max-width: 560px;
+    transition: box-shadow 0.3s ease;
+}
+.capsule-card:hover {
+    box-shadow: 0 12px 40px rgba(0,0,0,0.12), 0 4px 12px rgba(0,0,0,0.06);
+}
+.capsule-left {
+    flex: 1;
+    min-width: 0;
+}
+.capsule-left [data-testid="stFileUploader"] {
+    padding: 0 !important;
+    border: none !important;
+    background: transparent !important;
+    box-shadow: none !important;
+}
+.capsule-left [data-testid="stFileUploader"] > div {
+    padding: 0 !important;
+    border: none !important;
+    background: transparent !important;
+    box-shadow: none !important;
+}
+.capsule-left [data-testid="stFileUploader"] button {
+    display: none !important;
+}
+.capsule-left [data-testid="stFileUploader"] section {
+    padding: 0 !important;
+    border: none !important;
+    background: transparent !important;
+}
+.capsule-left .uploadedFileName {
+    display: none !important;
+}
+.capsule-left label {
+    font-size: 0.95rem !important;
+    color: #888fa0 !important;
+    font-weight: 400 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    cursor: pointer !important;
+    display: block !important;
+}
+.capsule-right {
+    flex-shrink: 0;
+    margin-left: 8px;
+}
+.capsule-right button {
+    background: #1a1d23 !important;
+    color: #ffffff !important;
+    border: none !important;
+    border-radius: 40px !important;
+    padding: 0.65rem 2rem !important;
+    font-size: 0.95rem !important;
+    font-weight: 600 !important;
+    cursor: pointer !important;
+    transition: background 0.2s ease, transform 0.15s ease !important;
+    min-width: 120px;
+    height: 44px;
+}
+.capsule-right button:hover {
+    background: #2d3139 !important;
+    transform: scale(1.02) !important;
+}
+.capsule-right button:disabled,
+.capsule-right button[disabled] {
+    background: #c0c4cc !important;
+    cursor: not-allowed !important;
+}
 
-def investment_logic(full_text, financial_json_str, anomalies_text):
-    """
-    分析节点三：投资逻辑梳理（7维框架）
-    """
-    system_prompt = """你是一位顶级硬科技VC合伙人，正在为投委会撰写投资逻辑摘要。请基于尽调报告全文、财务数据和已发现的异常，从以下7个维度梳理投资逻辑，每个维度2-3句分析，信息不足时基于行业常识推测，并在句末标注（推测）。最后给出综合判断。
+/* ===== 3D 悬浮卡片 ===== */
+.floating-cards {
+    display: flex;
+    gap: 20px;
+    justify-content: center;
+    margin-top: 3rem;
+    perspective: 1200px;
+    flex-wrap: wrap;
+}
+.floating-card {
+    width: 140px;
+    padding: 1.2rem 0.8rem;
+    background: rgba(255,255,255,0.72);
+    backdrop-filter: blur(6px);
+    border-radius: 16px;
+    text-align: center;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: #6b7280;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.06);
+    transform: rotateX(8deg) rotateY(-6deg) translateY(0);
+    transition: transform 0.45s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.4s ease;
+    cursor: default;
+    border: 1px solid rgba(255,255,255,0.5);
+}
+.floating-card:nth-child(2) {
+    transform: rotateX(8deg) rotateY(0deg) translateY(6px);
+}
+.floating-card:nth-child(3) {
+    transform: rotateX(8deg) rotateY(6deg) translateY(0);
+}
+.floating-card:hover {
+    transform: rotateX(0deg) rotateY(0deg) translateY(-12px) !important;
+    box-shadow: 0 20px 40px rgba(0,0,0,0.12);
+    background: rgba(255,255,255,0.95);
+}
+.floating-card-icon {
+    font-size: 1.6rem;
+    margin-bottom: 6px;
+    display: block;
+}
 
-维度：
-1. 产业周期：公司是否处在正确的时间窗口？产业处于导入期/加速期/成熟期？政策或技术换代驱动力？
-2. 技术壁垒：技术方案的护城河？专利、工艺know-how、团队背景、研发投入强度？被快速复制的风险？
-3. 客户价值：产品解决产业链多痛的问题？付费意愿、转换成本、标杆客户验证？
-4. 团队执行力：团队能否将技术转化为商业成功？产业化经验、供应链管理能力、商务拓展记录？
-5. 市场TAM：市场空间是否足够大以容纳高估值？可服务市场规模、渗透率趋势、行业增速？
-6. 财务模型：商业模式是否清晰？毛利率、研发效率、资本效率能否支撑到盈亏平衡点？现金流断裂风险？
-7. 退出路径：为资本提供的退出通道？上市路径（科创板/创业板/海外）或被并购价值？当前估值回报空间？
+/* ===== 结果页 Tab 导航栏 ===== */
+.tab-nav {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid #e0e4ea;
+    padding: 0;
+    margin: 1rem 0 0 0;
+    background: transparent;
+    position: relative;
+    z-index: 1;
+}
+.tab-item {
+    position: relative;
+    padding: 0.75rem 1.4rem;
+    font-size: 0.9rem;
+    font-weight: 500;
+    color: #9ca3af;
+    cursor: pointer;
+    transition: color 0.25s ease;
+    border: none;
+    background: transparent;
+    white-space: nowrap;
+    user-select: none;
+}
+.tab-item::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 50%;
+    width: 0;
+    height: 3px;
+    background: #1a1d23;
+    border-radius: 3px 3px 0 0;
+    transition: width 0.3s ease, left 0.3s ease;
+}
+.tab-item.active {
+    color: #1a1d23;
+    font-weight: 600;
+}
+.tab-item.active::after {
+    width: 70%;
+    left: 15%;
+}
+.tab-item:hover {
+    color: #4b5563;
+}
 
-输出格式（严格Markdown）：
-## 投资逻辑框架
-### 1. 产业周期
-...
-### 2. 技术壁垒
-...
-### 3. 客户价值
-...
-### 4. 团队执行力
-...
-### 5. 市场TAM
-...
-### 6. 财务模型
-...
-### 7. 退出路径
-...
-**综合判断**：（一句话总结投资逻辑是否成立，关键支撑点和最大风险）"""
+/* ===== 结果内容卡片 ===== */
+.result-card {
+    background: #ffffff;
+    border-radius: 20px;
+    padding: 1.8rem 2rem;
+    margin-top: 1.2rem;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.05), 0 1px 4px rgba(0,0,0,0.03);
+    position: relative;
+    z-index: 1;
+    min-height: 300px;
+}
 
-    user_prompt = f"报告全文：{full_text}\n\n财务数据：{financial_json_str}\n\n已发现异常：{anomalies_text}"
-    
-    response_text = call_llm(system_prompt, user_prompt, json_mode=False)
-    return response_text
+/* ===== 隐藏 Streamlit 默认元素 ===== */
+#MainMenu, header, footer, .stDeployButton {
+    visibility: hidden;
+    display: none !important;
+}
+.stApp > header {
+    display: none !important;
+}
+.stFileUploaderFile {
+    display: none !important;
+}
+</style>
+"""
 
-def generate_questions(full_text, anomalies_text, logic_text):
-    """
-    分析节点四：投委必问
-    """
-    system_prompt = """你是一位顶级硬科技VC合伙人，正要面试被投企业的创始人与CEO。基于尽调报告、已发现的异常和投资逻辑梳理，生成5个最尖锐、最直击要害的必问问题。语气老练、直接，覆盖技术、产能、收入质量、补贴依赖、财务模型、退出等关键点。
-输出格式：
-1. 问题一
-2. 问题二
-..."""
+def render_home_page():
+    """首页布局"""
+    cols = st.columns([1, 2, 1])
+    with cols[1]:
+        st.markdown('<div class="home-container">', unsafe_allow_html=True)
 
-    user_prompt = f"报告全文：{full_text}\n\n异常点：{anomalies_text}\n\n投资逻辑：{logic_text}"
-    
-    response_text = call_llm(system_prompt, user_prompt, json_mode=False)
-    return response_text
+        # Logo 占位
+        st.markdown('<div class="logo-placeholder">◆ LOGO ◆</div>', unsafe_allow_html=True)
 
-if __name__ == "__main__":
-    uploaded_file = st.file_uploader("支持文字型PDF，分析时长约60秒", type=["pdf"])
-    
-    if not uploaded_file:
-        st.info("👈 请上传一份硬科技公司的尽调报告PDF，然后点击“开始分析”。")
-    else:
-        if st.button("开始分析"):
-            with st.spinner("正在解析报告并调用AI分析，预计1分钟..."):
-                start_time = time.time()
-                
-                full_text = extract_text_from_pdf(uploaded_file)
-                if full_text.startswith("PDF解析失败"):
-                    st.error(full_text)
-                else:
-                    fin_data, fin_json_str = extract_financials(full_text)
-                    anomalies_text = detect_anomalies(full_text, fin_json_str)
-                    logic_text = investment_logic(full_text, fin_json_str, anomalies_text)
-                    questions_text = generate_questions(full_text, anomalies_text, logic_text)
-                    
-                    elapsed = time.time() - start_time
-                    
-                    st.session_state['fin_data'] = fin_data
-                    st.session_state['fin_json_str'] = fin_json_str
-                    st.session_state['anomalies_text'] = anomalies_text
-                    st.session_state['logic_text'] = logic_text
-                    st.session_state['questions_text'] = questions_text
-                    st.session_state['elapsed'] = elapsed
-                    
-                    st.success(f"分析完成，耗时 {elapsed:.0f} 秒")
+        # 主标语
+        st.markdown('<div class="slogan">Smart mind for sound investment</div>', unsafe_allow_html=True)
 
-    if 'fin_data' in st.session_state:
-        tab1, tab2, tab3, tab4 = st.tabs(["财务透视", "异常标记", "投资逻辑", "投委必问"])
-        
-        with tab1:
-            fin_data = st.session_state['fin_data']
-            if not fin_data:
-                st.warning("财务数据解析失败或未提取到有效数据。")
-            else:
-                try:
-                    df = pd.DataFrame(fin_data)
-                    from plotly.subplots import make_subplots
-                    import plotly.graph_objects as go
-                    
-                    fig1 = make_subplots(specs=[[{"secondary_y": True}]])
-                    fig1.add_trace(go.Bar(x=df['years'], y=df['revenue'], name="收入"), secondary_y=False)
-                    fig1.add_trace(go.Scatter(x=df['years'], y=df['gross_margin'], name="毛利率(%)", mode="lines+markers"), secondary_y=True)
-                    fig1.add_trace(go.Scatter(x=df['years'], y=df['rd_expense'], name="研发费用", fill='tozeroy', mode="lines"), secondary_y=True)
-                    fig1.update_layout(title_text="收入、毛利率与研发费用趋势")
-                    st.plotly_chart(fig1, use_container_width=True)
-                    
-                    fig2 = make_subplots(specs=[[{"secondary_y": True}]])
-                    fig2.add_trace(go.Bar(x=df['years'], y=df['operating_cash_flow'], name="经营现金流"), secondary_y=False)
-                    fig2.add_trace(go.Bar(x=df['years'], y=df['capex'], name="资本开支"), secondary_y=False)
-                    fig2.add_trace(go.Scatter(x=df['years'], y=df['accounts_receivable'], name="应收账款", mode="lines+markers"), secondary_y=True)
-                    fig2.add_trace(go.Scatter(x=df['years'], y=df['inventory'], name="存货", mode="lines+markers"), secondary_y=True)
-                    fig2.update_layout(title_text="现金流与营运资产趋势", barmode='group')
-                    st.plotly_chart(fig2, use_container_width=True)
-                    
-                    st.dataframe(df)
-                except Exception as e:
-                    st.warning(f"图表渲染出错：{str(e)}")
+        # 胶囊卡片：上传 + 按钮
+        cap_cols = st.columns([3, 1])
+        with cap_cols[0]:
+            uploaded = st.file_uploader(
+                "📄 上传尽调报告 PDF",
+                type=["pdf"],
+                label_visibility="collapsed",
+                key="home_uploader",
+            )
+        with cap_cols[1]:
+            btn_disabled = uploaded is None
+            if st.button("开始分析", disabled=btn_disabled, use_container_width=True):
+                with st.spinner(SPINNER_TEXT):
+                    start_time = time.time()
+                    full_text = extract_text_from_pdf(uploaded)
+                    if full_text.startswith("PDF解析失败"):
+                        st.error(full_text)
+                    else:
+                        industry_text = industry_analysis(full_text)
+                        fin_data, fin_json_str = extract_financials(full_text)
+                        ratios = calculate_ratios(fin_data)
+                        highlights_text = extract_highlights(full_text, fin_json_str)
+                        anomalies_text = detect_anomalies(full_text, fin_json_str)
+                        logic_text = investment_logic(full_text, fin_json_str, anomalies_text)
+                        communication_text = generate_communication_points(full_text, anomalies_text, logic_text)
 
-        with tab2:
-            anomalies = st.session_state['anomalies_text']
-            if anomalies.startswith("LLM调用出错"):
-                st.error(anomalies)
-            else:
-                cards = anomalies.split("**异常点")
-                for card in cards:
-                    if card.strip():
-                        content = "**异常点" + card
-                        border_color = "#ccc"
-                        if "风险等级：高" in content:
-                            border_color = "red"
-                        elif "风险等级：中" in content:
-                            border_color = "orange"
-                            
-                        # 用灰色背景和不同颜色的左边框来渲染风险等级
-                        st.markdown(
-                            f'''<div style="border-left: 5px solid {border_color}; padding: 15px; margin-bottom: 15px; background-color: #2b2b2b; color: #ddd; border-radius: 5px;">'''
-                            f'''<div style="white-space: pre-wrap;">{content}</div></div>''', 
-                            unsafe_allow_html=True
-                        )
+                        elapsed = time.time() - start_time
 
-        with tab3:
-            st.info("以下分析由AI基于尽调报告信息生成，推测部分已标注，仅供投资团队参考。")
-            logic_text = st.session_state['logic_text']
-            if logic_text.startswith("LLM调用出错"):
-                st.error(logic_text)
-            else:
-                st.markdown(logic_text)
-                
-        with tab4:
-            questions = st.session_state['questions_text']
-            if questions.startswith("LLM调用出错"):
-                st.error(questions)
-            else:
-                st.markdown(
-                    f'''<div style="background-color: #1a1a2e; padding: 20px; border-radius: 8px; color: #f5f5f5; font-size: 18px; line-height: 1.8;">'''
-                    f'''<strong>{questions}</strong></div>''', 
-                    unsafe_allow_html=True
-                )
+                        st.session_state['full_text'] = full_text
+                        st.session_state['industry_text'] = industry_text
+                        st.session_state['fin_data'] = fin_data
+                        st.session_state['fin_json_str'] = fin_json_str
+                        st.session_state['ratios'] = ratios
+                        st.session_state['highlights_text'] = highlights_text
+                        st.session_state['anomalies_text'] = anomalies_text
+                        st.session_state['logic_text'] = logic_text
+                        st.session_state['communication_text'] = communication_text
+                        st.session_state['elapsed'] = elapsed
+
+                        st.session_state.page = "result"
+                        st.rerun()
+
+        # 3D 悬浮卡片
+        st.markdown("""
+        <div class="floating-cards">
+            <div class="floating-card">
+                <span class="floating-card-icon">📊</span>
+                Financials
+            </div>
+            <div class="floating-card">
+                <span class="floating-card-icon">🔬</span>
+                Industry
+            </div>
+            <div class="floating-card">
+                <span class="floating-card-icon">🧠</span>
+                Logic
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.markdown('</div>', unsafe_allow_html=True)
+
+
+def render_result_page():
+    """结果页布局：自定义 Tab 导航 + 内容区"""
+    # Tab 导航栏
+    tab_labels = ["行业研究", "财务透视", "异常标记", "投资亮点", "投资逻辑", "沟通清单"]
+
+    st.markdown("""
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:0;position:relative;z-index:1;">
+        <span style="font-size:1.5rem;font-weight:700;color:#1a1d23;letter-spacing:-0.03em;">DiligencePilot</span>
+        <span style="font-size:0.75rem;color:#9ca3af;font-weight:400;background:#e8ecf1;padding:2px 10px;border-radius:20px;">
+            {:.0f}s
+        </span>
+    </div>
+    """.format(st.session_state.get('elapsed', 0)), unsafe_allow_html=True)
+
+    # 用列模拟 Tab 切换
+    cols = st.columns(len(tab_labels))
+    for i, label in enumerate(tab_labels):
+        with cols[i]:
+            active_cls = "active" if st.session_state.tab_index == i else ""
+            btn_type = "primary" if st.session_state.tab_index == i else "secondary"
+            if st.button(label, key=f"tab_btn_{i}", use_container_width=True, type=btn_type):
+                st.session_state.tab_index = i
+                st.rerun()
+
+    # 内容卡片
+    st.markdown('<div class="result-card">', unsafe_allow_html=True)
+
+    tab_idx = st.session_state.tab_index
+
+    if tab_idx == 0:  # 行业研究
+        render_industry_tab(st.session_state.get('industry_text', ''))
+    elif tab_idx == 1:  # 财务透视
+        render_financial_tab(
+            st.session_state.get('fin_data'),
+            st.session_state.get('ratios'),
+        )
+    elif tab_idx == 2:  # 异常标记
+        render_anomalies_tab(st.session_state.get('anomalies_text', ''))
+    elif tab_idx == 3:  # 投资亮点
+        render_highlights_tab(st.session_state.get('highlights_text', ''))
+    elif tab_idx == 4:  # 投资逻辑
+        render_logic_tab(st.session_state.get('logic_text', ''))
+    elif tab_idx == 5:  # 沟通清单
+        render_communication_tab(st.session_state.get('communication_text', ''))
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
+# ── 页面路由 ──
+st.markdown(CSS, unsafe_allow_html=True)
+
+if st.session_state.page == "home":
+    render_home_page()
+else:
+    render_result_page()
