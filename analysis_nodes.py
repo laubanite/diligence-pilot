@@ -78,9 +78,11 @@ JSON结构如下，缺少的字段必须填 null，键名不能省略：
   "equity_before_round": [数字或null],
   "new_equity_issued": [数字或null],
   "government_subsidy": [数字或null],
-  "revenue_top5_customer_share": [数字或null]
+  "revenue_top5_customer_share": [数字或null],
+  "segment_revenue": {"业务或产品名称": 数字, ...},
+  "segment_gross_margin": {"业务或产品名称": 百分比数字, ...}
 }
-规则：数字不要带千分位逗号，直接写如 1500.5。只返回 JSON 对象，不要任何解释、说明、Markdown标记（如 ```json）。首字符必须是 {，尾字符必须是 }。"""
+规则：数字不要带千分位逗号，直接写如 1500.5。segment_revenue 和 segment_gross_margin 仅在报告明确提供分业务数据时提取，否则填 null。只返回 JSON 对象，不要任何解释、说明、Markdown标记（如 ```json）。首字符必须是 {，尾字符必须是 }。"""
 
     user_prompt = full_text
     response_text = call_llm(system_prompt, user_prompt, json_mode=True)

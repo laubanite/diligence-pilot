@@ -1,6 +1,19 @@
 """
 配置常量模块
 """
+# ── 黑白灰配色体系 ──
+COLOR_PRIMARY = "#1a1a1a"        # 主柱/主色：近乎黑
+COLOR_SECONDARY = "#4a4a4a"      # 次要柱/折线：深灰
+COLOR_TERTIARY = "#7a7a7a"       # 第三元素：中灰
+COLOR_ACCENT = "#2c2c2c"         # 强调/增长率线：深炭灰
+COLOR_LIGHT = "#b0b0b0"          # 辅助线/网格：浅灰
+COLOR_BG = "#f8f8f8"             # 卡片/图背景：极浅灰
+COLOR_WHITE = "#ffffff"          # 纯白
+COLOR_MARKER = "#333333"         # 标记点：深灰
+PIE_COLORS = ["#1a1a1a", "#3d3d3d", "#5e5e5e", "#7f7f7f", "#a0a0a0"]
+RADAR_FILL = "rgba(60, 60, 60, 0.15)"
+RADAR_LINE = "#3c3c3c"
+
 THRESHOLD_MAP = {
     "cash_runway_months": {"min": 18, "warn_min": 12},
     "profit_quality": {"min": 0.8, "warn_min": 0.5},

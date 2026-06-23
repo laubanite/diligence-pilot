@@ -9,6 +9,9 @@ def calculate_ratios(fin_data):
     返回比率字典，所有除法都有除零保护。
     """
     years = fin_data.get("years", []) if isinstance(fin_data, dict) else []
+    # 防御性校验：确保 years 是 list，避免非 list 值流入 ratios 导致 pd.DataFrame 崩溃
+    if not isinstance(years, list):
+        years = []
     ratios = {
         "years": years,
         "cash_runway_months": [],
