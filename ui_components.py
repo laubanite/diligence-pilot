@@ -80,16 +80,55 @@ def render_alert_table(title, rows, alert_rules):
     st.dataframe(df.style.apply(highlight_row, axis=1), use_container_width=True)
 
 
+def _normalize_fin_dict(data, expected_years=None):
+    """将 dict 中所有值统一为等长列表，缺失年份用 None 补齐，确保安全传入 DataFrame。
+
+    如果 expected_years 未提供，则从 data['years'] 推断。
+    如果 data 中没有 'years' 键或为空，返回 None。
+    标量值（非列表）会被包装成单元素列表后再补齐。
+    """
+    if not isinstance(data, dict) or not data:
+        return None
+
+    # 提取年份列表，如果不存在或为空则无法标准化
+    years = data.get("years", None)
+    if not isinstance(years, list) or len(years) == 0:
+        if expected_years and isinstance(expected_years, list) and len(expected_years) > 0:
+            years = expected_years
+        else:
+            return None
+
+    n = len(years)
+    normalized = {"years": list(years)}
+
+    for key, value in data.items():
+        if key == "years":
+            continue
+        # 统一为列表
+        if not isinstance(value, list):
+            value = [value]
+        # 补齐或截断到与 years 等长
+        if len(value) < n:
+            value = list(value) + [None] * (n - len(value))
+        elif len(value) > n:
+            value = value[:n]
+        normalized[key] = value
+
+    return normalized
+
+
 def render_financial_tab(fin_data, ratios):
     """Tab 1：财务透视"""
     st.markdown("## 核心经营趋势")
     if fin_data:
-        df = pd.DataFrame(fin_data)
-        fig = make_subplots(specs=[[{"secondary_y": True}]])
-        fig.add_trace(go.Bar(x=df['years'], y=df['revenue'], name="收入", marker_color="#1a1d23"), secondary_y=False)
-        fig.add_trace(go.Scatter(x=df['years'], y=df['operating_cash_flow'], name="经营现金流", line=dict(color="#9ca3af")), secondary_y=False)
-        fig.update_layout(height=400, margin=dict(t=20, b=20), barmode='group')
-        st.plotly_chart(fig, use_container_width=True)
+        norm_fin = _normalize_fin_dict(fin_data)
+        if norm_fin and norm_fin.get("years"):
+            df = pd.DataFrame.from_dict(norm_fin, orient='columns')
+            fig = make_subplots(specs=[[{"secondary_y": True}]])
+            fig.add_trace(go.Bar(x=df['years'], y=df['revenue'], name="收入", marker_color="#1a1d23"), secondary_y=False)
+            fig.add_trace(go.Scatter(x=df['years'], y=df['operating_cash_flow'], name="经营现金流", line=dict(color="#9ca3af")), secondary_y=False)
+            fig.update_layout(height=400, margin=dict(t=20, b=20), barmode='group')
+            st.plotly_chart(fig, use_container_width=True)
 
     st.markdown("## 财务健康雷达")
     if ratios:
@@ -97,22 +136,25 @@ def render_financial_tab(fin_data, ratios):
 
     st.markdown("## 详细指标分析")
     if isinstance(ratios, dict) and ratios:
-        ratios_df = pd.DataFrame(ratios)
-        display_groups = {
-            "生存与现金流": ["cash_runway_months", "profit_quality", "cash_to_revenue_ratio"],
-            "盈利质量": ["gross_margin", "deducted_np_ratio", "rd_expense_ratio"],
-            "运营效率": ["ar_turnover_days", "inventory_turnover_days", "asset_turnover"],
-        }
-        for group_name, metrics in display_groups.items():
-            rows = []
-            for metric in metrics:
-                if metric in ratios_df.columns:
-                    row = {"指标名称": metric, "健康阈值": str(THRESHOLD_MAP.get(metric, {}))}
-                    for year in ratios_df["years"]:
-                        year_idx = ratios_df["years"].tolist().index(year)
-                        row[str(year)] = ratios_df.loc[year_idx, metric]
-                    rows.append(row)
-            render_alert_table(group_name, rows, THRESHOLD_MAP)
+        norm_ratios = _normalize_fin_dict(ratios)
+        if norm_ratios and norm_ratios.get("years"):
+            ratios_df = pd.DataFrame.from_dict(norm_ratios, orient='columns')
+            years_list = norm_ratios["years"]
+            display_groups = {
+                "生存与现金流": ["cash_runway_months", "profit_quality", "cash_to_revenue_ratio"],
+                "盈利质量": ["gross_margin", "deducted_np_ratio", "rd_expense_ratio"],
+                "运营效率": ["ar_turnover_days", "inventory_turnover_days", "asset_turnover"],
+            }
+            for group_name, metrics in display_groups.items():
+                rows = []
+                for metric in metrics:
+                    if metric in ratios_df.columns:
+                        row = {"指标名称": metric, "健康阈值": str(THRESHOLD_MAP.get(metric, {}))}
+                        for year in years_list:
+                            year_idx = years_list.index(year)
+                            row[str(year)] = ratios_df.loc[year_idx, metric]
+                        rows.append(row)
+                render_alert_table(group_name, rows, THRESHOLD_MAP)
 
 
 def render_highlights_tab(highlights_text):
