@@ -9,42 +9,78 @@ import streamlit as st
 from llm_utils import call_llm
 
 
+def parse_json_from_llm(raw_text):
+    """高鲁棒性 JSON 解析函数，处理各种 LLM 返回格式。"""
+    if not raw_text:
+        raise ValueError("Empty response")
+
+    # 步骤1：去除首尾空白
+    clean = raw_text.strip()
+
+    # 步骤2：去掉 Markdown 代码块标记
+    if clean.startswith("```json"):
+        clean = clean[7:]
+    elif clean.startswith("```"):
+        clean = clean[3:]
+    if clean.endswith("```"):
+        clean = clean[:-3]
+    clean = clean.strip()
+
+    # 步骤3：如果仍不以 { 开头，尝试用正则提取第一个完整的 JSON 对象
+    if not clean.startswith("{"):
+        match = re.search(r'\{.*\}', clean, re.DOTALL)
+        if match:
+            clean = match.group(0)
+        else:
+            raise ValueError(f"No JSON object found in: {clean[:200]}")
+
+    # 步骤4：尝试解析，如果失败，尝试修复尾逗号等常见错误
+    try:
+        return json.loads(clean)
+    except json.JSONDecodeError:
+        # 修复尾逗号（对象或数组最后一项后多余的逗号）
+        fixed = re.sub(r',\s*}', '}', clean)
+        fixed = re.sub(r',\s*]', ']', fixed)
+        return json.loads(fixed)
+
+
 def extract_financials(full_text):
     """
     分析节点一：从报告全文中提取三年核心财务基础科目数据。
     返回 (fin_data_dict, fin_json_str)。
     """
-    system_prompt = """你是一位硬科技赛道财务分析师。从以下尽调报告中提取近三个完整财年的基础科目数据。返回严格的JSON，不要任何解释。
-JSON格式：
+    system_prompt = """你是一个硬科技赛道财务数据抽取系统。你的唯一任务是返回一个 JSON 对象，没有任何其他文字。
+从以下尽调报告文本中提取近三个完整财年的核心基础财务数据。所有金额统一以"万元"为单位（如果报告是元请自动除以10000）。
+JSON结构如下，缺少的字段必须填 null，键名不能省略：
 {
   "years": ["2023","2024","2025"],
-  "revenue": [数字,数字,数字],
-  "cost_of_sales": [数字,数字,数字],
-  "gross_profit": [数字,数字,数字],
-  "rd_expense": [数字,数字,数字],
-  "ebitda": [数字,数字,数字],
-  "net_profit": [数字,数字,数字],
-  "non_recurring_items": [数字,数字,数字],
-  "operating_cash_flow": [数字,数字,数字],
-  "investing_cash_flow": [数字,数字,数字],
-  "cash_equivalents": [数字,数字,数字],
-  "cash_from_sales": [数字,数字,数字],
-  "accounts_receivable": [数字,数字,数字],
-  "inventory": [数字,数字,数字],
-  "accounts_payable": [数字,数字,数字],
-  "advance_from_customers": [数字,数字,数字],
-  "total_assets": [数字,数字,数字],
-  "current_assets": [数字,数字,数字],
-  "current_liabilities": [数字,数字,数字],
-  "short_term_borrowings": [数字,数字,数字],
-  "long_term_borrowings": [数字,数字,数字],
-  "non_current_liabilities_due_in_1yr": [数字,数字,数字],
-  "equity_before_round": [数字,数字,数字],
-  "new_equity_issued": [数字,数字,数字],
-  "government_subsidy": [数字,数字,数字],
-  "revenue_top5_customer_share": [百分比数字,数字,数字]
+  "revenue": [数字或null],
+  "cost_of_sales": [数字或null],
+  "gross_profit": [数字或null],
+  "rd_expense": [数字或null],
+  "ebitda": [数字或null],
+  "net_profit": [数字或null],
+  "non_recurring_items": [数字或null],
+  "operating_cash_flow": [数字或null],
+  "investing_cash_flow": [数字或null],
+  "cash_equivalents": [数字或null],
+  "cash_from_sales": [数字或null],
+  "accounts_receivable": [数字或null],
+  "inventory": [数字或null],
+  "accounts_payable": [数字或null],
+  "advance_from_customers": [数字或null],
+  "total_assets": [数字或null],
+  "current_assets": [数字或null],
+  "current_liabilities": [数字或null],
+  "short_term_borrowings": [数字或null],
+  "long_term_borrowings": [数字或null],
+  "non_current_liabilities_due_in_1yr": [数字或null],
+  "equity_before_round": [数字或null],
+  "new_equity_issued": [数字或null],
+  "government_subsidy": [数字或null],
+  "revenue_top5_customer_share": [数字或null]
 }
-提示要求：所有数字必须直接从报告提取，单位统一为万元。毛利率、研发费用率等比率不要计算，只提取原始数值。未找到的字段必须填 null，严禁省略键名。只返回 JSON 对象，首字符必须是 {，尾字符必须是 }。不要输出任何解释、注释或 Markdown 标记。所有数字必须来自报告，计算逻辑需明确，不要使用外部知识。"""
+规则：数字不要带千分位逗号，直接写如 1500.5。只返回 JSON 对象，不要任何解释、说明、Markdown标记（如 ```json）。首字符必须是 {，尾字符必须是 }。"""
 
     user_prompt = full_text
     response_text = call_llm(system_prompt, user_prompt, json_mode=True)
@@ -53,24 +89,11 @@ JSON格式：
         if response_text.startswith("LLM调用出错"):
             raise ValueError(response_text)
 
-        clean_text = response_text.strip()
-        if clean_text.startswith("```json"):
-            clean_text = clean_text[7:]
-        elif clean_text.startswith("```"):
-            clean_text = clean_text[3:]
-        if clean_text.endswith("```"):
-            clean_text = clean_text[:-3]
-        clean_text = clean_text.strip()
+        parsed = parse_json_from_llm(response_text)
+        return parsed, response_text
 
-        if not clean_text.startswith("{"):
-            match = re.search(r'\{.*\}', clean_text, re.DOTALL)
-            if match:
-                clean_text = match.group()
-
-        return json.loads(clean_text), response_text
     except Exception as e:
         print(f"JSON解析失败: {e}\n原始返回内容: \n{response_text}")
-        st.error(f"财务数据解析失败。原始返回（前500字符）：{response_text[:500]}")
         return {}, response_text
 
 
@@ -97,14 +120,16 @@ def detect_anomalies(full_text, financial_json_str):
 - 研发资本化率 > 50%。
 
 对每个异常严格按以下格式输出，不要输出任何其他内容：
-**异常点1**
+请按以下格式输出每个异常：
+### [异常短标题]
 - 异常描述：（一句话）
 - 数据对比：（具体年份和数字）
 - 原文依据：（引用报告原文1-2句，标明页码如[page_8]）
 - 风险等级：高/中
 
-**异常点2**
-...
+短标题要求：5-10个字，直接概括核心问题，如"库存积压风险"、"有息负债高企"、"毛利率骤降"。
+确保每个异常之间有空行分隔。
+不要输出任何开头语或总结语。
 
 只返回上述格式内容，不要任何其他文字。
 
@@ -121,14 +146,15 @@ def extract_highlights(full_text, financial_json_str):
     """
     system_prompt = """你是一位硬科技赛道PE投资分析师。基于尽调报告全文和财务数据，找出这家公司最值得关注的3个投资亮点。每个亮点必须有具体数据或事实支撑。
 对每个亮点，严格按以下格式输出：
-**亮点1**
-- 亮点描述：（一句话概括）
+请按以下格式输出每个亮点：
+### [亮点短标题]
+- 亮点描述：（一句话）
 - 数据支撑：（具体数字、时间、客户、专利等）
 - 原文依据：（引用报告原文1-2句，标明页码如[page_x]）
 - 亮点强度：强/中
 
-**亮点2**
-...
+短标题要求：5-10个字，如"国产替代订单放量"、"核心专利壁垒深厚"。
+确保每个亮点之间有空行分隔。不要输出任何开头语或总结语。
 
 只返回上述格式内容，不要任何其他文字。
 
@@ -221,12 +247,14 @@ def generate_communication_points(full_text, anomalies_text, logic_text):
     """
     system_prompt = """你是PE投资分析系统。你的任务是根据报告、财务数据和异常，直接输出5个沟通点。不要输出任何前言、后语、解释。严格按以下格式输出：
 
-**沟通点1：[标题]**
-- 沟通要点：...
-- 产生原因：...
+请按以下格式输出每个沟通点：
+### [沟通主题短标题]
+- 沟通要点：（2-3句话，描述需要了解什么，语气中立开放）
+- 产生原因：（引用报告数据或缺失信息，标注[page_x]）
 - 我们的初步理解：可能原因一：...；可能原因二：...
 
-...（重复5次）
+短标题要求：5-10个字，概括沟通主题，如"存货大幅增加的合理性"、"毛利率下滑的原因"。
+确保每个沟通点之间有空行分隔。不要输出任何开头语、问候语或总结语。
 
 覆盖维度应包括：
 - 技术与产品（研发进展、技术壁垒、产品成熟度、专利归属等）
@@ -237,8 +265,6 @@ def generate_communication_points(full_text, anomalies_text, logic_text):
 - 融资与退出（估值逻辑、资金用途、退出预期等）
 
 生成5个沟通点，按重要性排序。保持专业、客观，体现投资团队的审慎与尊重。
-
-**重要：直接输出第一个沟通点，不要任何开头语、总结语、问候语。严格遵循上述三段式格式，不要输出任何与格式无关的文字。**
 
 **所有事实判断必须引用报告原文或页码。外部知识仅在报告缺失时使用，且必须标注（推测）。**"""
 

@@ -1,7 +1,10 @@
 """
 PDF 文本提取模块
 """
-import pymupdf
+try:
+    import pymupdf
+except ImportError:
+    import fitz as pymupdf
 
 
 def extract_text_from_pdf(uploaded_file):

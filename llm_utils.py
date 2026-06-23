@@ -41,11 +41,11 @@ def call_llm(system_prompt, user_prompt, json_mode=False):
             {"role": "user", "content": user_prompt}
         ],
         "temperature": 0.1,
-        "max_tokens": 4096
+        "max_tokens": 16384
     }
 
     try:
-        response = requests.post(url, headers=headers, json=payload, timeout=90)
+        response = requests.post(url, headers=headers, json=payload, timeout=180)
         response.raise_for_status()
         result = response.json()
         return result["choices"][0]["message"]["content"]

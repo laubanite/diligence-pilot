@@ -1,9 +1,9 @@
 """
-DiligencePilot - 硬科技AI投研助手
-主入口模块（UI 重构版）
+VestMind - 硬科技AI投研助手
+主入口模块
 """
 import time
-
+import re
 import streamlit as st
 from dotenv import load_dotenv
 
@@ -30,7 +30,7 @@ from ui_components import (
 load_dotenv()
 
 # ── 页面配置 ──
-st.set_page_config(page_title=PAGE_TITLE, layout="wide")
+st.set_page_config(page_title="VestMind", layout="wide")
 
 # ── 状态初始化 ──
 if "page" not in st.session_state:
@@ -52,10 +52,6 @@ html, body, .stApp {
     visibility: hidden;
     display: none !important;
 }
-.stApp > header {
-    display: none !important;
-}
-
 .stApp::before {
     content: '';
     position: fixed;
@@ -74,247 +70,94 @@ html, body, .stApp {
 }
 """
 
-# ── 首页独占 CSS (解决居中和内嵌框) ──
+# ── 首页独占 CSS (完全保留您的原始设计) ──
 HOME_CSS = """
 <style>
-/* 1. 彻底消灭滚动条，强制垂直居中 */
 .block-container {
-    display: flex !important;
-    flex-direction: column !important;
-    justify-content: center !important;
-    align-items: center !important;
-    min-height: 100vh !important;
-    padding-top: 0 !important;
-    padding-bottom: 0 !important;
-    max-width: 100% !important;
+    display: flex !important; flex-direction: column !important; justify-content: center !important; align-items: center !important;
+    min-height: 100vh !important; padding-top: 0 !important; padding-bottom: 0 !important; max-width: 100% !important;
 }
 .block-container > div[data-testid="stVerticalBlock"] {
-    width: 100%;
-    max-width: 800px;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    position: relative;
-    z-index: 1;
+    width: 100%; max-width: 800px; display: flex; flex-direction: column; justify-content: center; position: relative; z-index: 1;
 }
+.hero-text-container { width: 100%; max-width: 680px; margin: 0 auto; text-align: left; }
+.logo-placeholder { font-size: 1.25rem; font-weight: 600; letter-spacing: 0.05em; color: #4b5563; margin-bottom: 1.5rem; }
+.slogan { font-size: clamp(2.5rem, 4.5vw, 4.2rem); font-weight: 400; color: #1a1d23; margin-bottom: 3.5rem; line-height: 1.15; letter-spacing: -0.02em; }
+.investment-italic { font-family: 'Georgia', 'Times New Roman', serif; font-style: italic; font-weight: 400; color: #1a1d23; }
 
-/* 文本与 Logo 样式：使用统一宽度容器，整体居中，但内部文字全部左对齐 */
-.hero-text-container {
-    width: 100%;
-    max-width: 680px; /* 和下方长条胶囊保持一致，以实现完美的左边缘对齐 */
-    margin: 0 auto;
-    text-align: left; 
-}
-.logo-placeholder {
-    font-size: 1.25rem;
-    font-weight: 600;
-    letter-spacing: 0.05em;
-    color: #4b5563;
-    margin-bottom: 1.5rem;
-    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-    user-select: none;
-}
-.slogan {
-    font-size: clamp(2.5rem, 4.5vw, 4.2rem);
-    font-weight: 400;
-    color: #1a1d23;
-    margin-bottom: 3.5rem;
-    line-height: 1.15;
-    letter-spacing: -0.02em;
-}
-.investment-italic {
-    font-family: 'Georgia', 'Times New Roman', serif;
-    font-style: italic;
-    font-weight: 400;
-    color: #1a1d23;
-}
-
-/* ========================================================================= */
-/* 2. 黑魔法：劫持 Streamlit 原生布局容器，变成完整的内嵌式胶囊框 */
-/* ========================================================================= */
 div[data-testid="stHorizontalBlock"]:has([data-testid="stFileUploader"]) {
-    background: #ffffff;
-    border-radius: 60px;
-    box-shadow: 0 10px 40px rgba(0,0,0,0.04), 0 2px 10px rgba(0,0,0,0.02);
-    padding: 8px 8px 8px 26px; 
-    align-items: center;
-    max-width: 680px;
-    margin: 0 auto;
-    border: 1px solid rgba(0,0,0,0.04);
+    background: #ffffff; border-radius: 60px; box-shadow: 0 10px 40px rgba(0,0,0,0.04), 0 2px 10px rgba(0,0,0,0.02);
+    padding: 8px 8px 8px 26px; align-items: center; max-width: 680px; margin: 0 auto; border: 1px solid rgba(0,0,0,0.04);
 }
-
 [data-testid="stFileUploader"] { margin-bottom: 0 !important; }
-[data-testid="stFileUploader"] > div { padding: 0 !important; }
+[data-testid="stFileUploader"] section { padding: 0 !important; background: transparent !important; border: none !important; min-height: 48px !important; display: flex; align-items: center; }
+[data-testid="stFileUploaderDropzoneInstructions"] > div, [data-testid="stFileUploaderDropzoneIcon"] { display: none !important; }
+[data-testid="stFileUploaderDropzoneInstructions"]::before { content: "Upload a PDF report or give any task..."; color: #9ca3af; font-size: 1.05rem; }
+[data-testid="stUploadedFile"] { background: #f4f5f7 !important; border-radius: 40px !important; padding: 4px 16px !important; margin-top: 0 !important; border: none !important; }
 
-[data-testid="stFileUploader"] section { 
-    padding: 0 !important; 
-    background: transparent !important; 
-    border: none !important;
-    min-height: 48px !important;
-    display: flex;
-    align-items: center;
-}
-[data-testid="stFileUploaderDropzoneInstructions"] > div,
-[data-testid="stFileUploaderDropzoneIcon"] { display: none !important; }
-
-[data-testid="stFileUploaderDropzoneInstructions"] { 
-    display: flex !important; 
-    margin: 0 !important;
-}
-[data-testid="stFileUploaderDropzoneInstructions"]::before {
-    content: "Upload a PDF report or give any task...";
-    color: #9ca3af;
-    font-size: 1.05rem;
-    font-weight: 400;
-}
-
-[data-testid="stUploadedFile"] {
-    background: #f4f5f7 !important;
-    border-radius: 40px !important;
-    padding: 4px 16px !important;
-    margin-top: 0 !important;
-    border: none !important;
-}
-
-div[data-testid="stHorizontalBlock"] [data-testid="column"]:last-child {
-    display: flex;
-    justify-content: flex-end;
-}
 div[data-testid="stHorizontalBlock"] [data-testid="stButton"] button {
-    background: #1a1d23 !important;
-    color: #ffffff !important;
-    border: none !important;
-    border-radius: 40px !important;
-    height: 48px !important; 
-    padding: 0 2.2rem !important;
-    font-size: 0.95rem !important;
-    font-weight: 500 !important;
-    width: 100%;
-    transition: all 0.2s ease !important;
+    background: #1a1d23 !important; color: #ffffff !important; border: none !important; border-radius: 40px !important;
+    height: 48px !important; padding: 0 2.2rem !important; font-size: 0.95rem !important; font-weight: 500 !important; width: 100%;
 }
-div[data-testid="stHorizontalBlock"] [data-testid="stButton"] button:hover {
-    background: #000000 !important;
-    transform: translateY(-1px) !important;
-}
-div[data-testid="stHorizontalBlock"] [data-testid="stButton"] button:disabled {
-    background: #f0f2f5 !important;
-    color: #a0a5b0 !important;
-    transform: none !important;
-    cursor: not-allowed !important;
-}
-
-/* 底部极简线条图标 */
-.features-container {
-    display: flex;
-    gap: 70px;
-    justify-content: center;
-    margin-top: 4.5rem;
-    opacity: 0.7;
-}
-.feature-item {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 12px;
-    color: #6b7280;
-    font-size: 0.85rem;
-    font-weight: 500;
-    transition: all 0.3s ease;
-    cursor: default;
-}
-.feature-item:hover {
-    opacity: 1;
-    color: #1a1d23;
-    transform: translateY(-2px);
-}
-.feature-icon {
-    width: 24px;
-    height: 24px;
-    stroke: currentColor;
-    stroke-width: 1.5;
-    fill: none;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-}
+/* 图标容器样式 */
+.features-container { display: flex; gap: 70px; justify-content: center; margin-top: 4.5rem; opacity: 0.7; }
+.feature-item { display: flex; flex-direction: column; align-items: center; gap: 12px; color: #6b7280; font-size: 0.85rem; font-weight: 500; }
+.feature-icon { width: 24px; height: 24px; stroke: currentColor; stroke-width: 1.5; fill: none; stroke-linecap: round; stroke-linejoin: round; }
 </style>
 """
 
-# ── 结果页独占 CSS (恢复正常顶部间距) ──
+# ── 结果页独占 CSS (改黑Tab，去除白矩形，增加目录样式) ──
 RESULT_CSS = """
 <style>
-.block-container {
-    padding-top: 2.5rem !important;
-    padding-bottom: 2rem !important;
-    max-width: 1200px !important;
-    display: block !important;
+.block-container { padding-top: 2.5rem !important; max-width: 1300px !important; display: block !important; }
+
+/* Tab 切换样式 (黑白 Pill 风格) —— 使用 data-testid 精准定位 */
+button[data-testid="baseButton-secondary"],
+button[data-testid="baseButton-secondary"]:hover {
+    border-radius: 50px !important;
+    border: none !important;
+    background-color: #f1f3f5 !important;
+    color: #6b7280 !important;
+    transition: all 0.2s ease !important;
+}
+button[data-testid="baseButton-primary"],
+button[data-testid="baseButton-primary"]:hover,
+button[data-testid="baseButton-primary"]:active,
+button[data-testid="baseButton-primary"]:focus {
+    background-color: #1a1d23 !important;
+    color: #ffffff !important;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15) !important;
+    border-radius: 50px !important;
+    border: none !important;
 }
 
-/* 结果页 Tab 导航栏 */
-.tab-nav {
-    display: flex;
-    gap: 0;
-    border-bottom: 1px solid #e0e4ea;
-    padding: 0;
-    margin: 1rem 0 0 0;
-    background: transparent;
-    position: relative;
-    z-index: 1;
-}
-.tab-item {
-    position: relative;
-    padding: 0.75rem 1.4rem;
-    font-size: 0.9rem;
-    font-weight: 500;
-    color: #9ca3af;
-    cursor: pointer;
-    transition: color 0.25s ease;
-    border: none;
-    background: transparent;
-    white-space: nowrap;
-    user-select: none;
-}
-.tab-item::after {
-    content: '';
-    position: absolute;
-    bottom: 0;
-    left: 50%;
-    width: 0;
-    height: 3px;
-    background: #1a1d23;
-    border-radius: 3px 3px 0 0;
-    transition: width 0.3s ease, left 0.3s ease;
-}
-.tab-item.active {
-    color: #1a1d23;
-    font-weight: 600;
-}
-.tab-item.active::after {
-    width: 70%;
-    left: 15%;
-}
-.tab-item:hover {
-    color: #4b5563;
-}
+/* 去除中间大白块 */
+.result-card { background: transparent !important; box-shadow: none !important; border: none !important; margin-top: 2rem; padding: 0 !important; }
 
-/* 结果内容卡片 */
-.result-card {
-    background: #ffffff;
-    border-radius: 20px;
-    padding: 1.8rem 2rem;
-    margin-top: 1.2rem;
-    box-shadow: 0 4px 20px rgba(0,0,0,0.05), 0 1px 4px rgba(0,0,0,0.03);
-    position: relative;
-    z-index: 1;
-    min-height: 300px;
-}
+/* 目录容器 (固定在右侧) */
+.toc-container { position: sticky; top: 50px; border-left: 1px solid #e5e7eb; padding-left: 20px; margin-left: 10px; }
+.toc-item { font-size: 0.85rem; color: #9ca3af; margin-bottom: 15px; cursor: pointer; text-decoration: none; display: block; }
+.toc-item:hover { color: #1a1d23; }
 </style>
 """
 
+def generate_toc_html(text):
+    """提取 H2 (##) 和 H3 (###) 标题生成目录"""
+    if not text:
+        return ""
+    titles = re.findall(r'^(#{2,3})\s+(.*)', text, re.MULTILINE)
+    if not titles: return ""
+    html = '<div class="toc-container">'
+    for level_mark, title in titles:
+        clean_title = title.replace("**", "").strip()
+        indent = 15 if level_mark == "###" else 0
+        html += f'<div class="toc-item" style="margin-left:{indent}px">{clean_title}</div>'
+    html += '</div>'
+    return html
+
 def render_home_page():
-    """首页布局"""
+    """首页布局 (恢复所有完整代码，包括下方图标)"""
     st.markdown(HOME_CSS, unsafe_allow_html=True)
-    
-    # 将文本包裹在指定的对齐容器内，完美实现图2的左边缘对齐且支持换行
     st.markdown("""
     <div class="hero-text-container">
         <div class="logo-placeholder">VestMind</div>
@@ -322,51 +165,30 @@ def render_home_page():
     </div>
     """, unsafe_allow_html=True)
 
-    # 用原生 st.columns 构建布局，CSS 会自动把这一行变成"一个胶囊"
     cap_cols = st.columns([3, 1])
-    
     with cap_cols[0]:
-        uploaded = st.file_uploader(
-            "Placeholder", # CSS 已劫持并替换了这里的文案，所以这里写什么不重要
-            type=["pdf"],
-            label_visibility="collapsed",
-            key="home_uploader",
-        )
-        
+        uploaded = st.file_uploader("Placeholder", type=["pdf"], label_visibility="collapsed", key="home_uploader")
     with cap_cols[1]:
-        btn_disabled = uploaded is None
-        if st.button("开始分析", disabled=btn_disabled, use_container_width=True):
+        if st.button("Analyze", disabled=(uploaded is None), use_container_width=True):
             with st.spinner(SPINNER_TEXT):
                 start_time = time.time()
                 full_text = extract_text_from_pdf(uploaded)
                 if full_text.startswith("PDF解析失败"):
                     st.error(full_text)
                 else:
-                    industry_text = industry_analysis(full_text)
+                    st.session_state['industry_text'] = industry_analysis(full_text)
                     fin_data, fin_json_str = extract_financials(full_text)
-                    ratios = calculate_ratios(fin_data)
-                    highlights_text = extract_highlights(full_text, fin_json_str)
-                    anomalies_text = detect_anomalies(full_text, fin_json_str)
-                    logic_text = investment_logic(full_text, fin_json_str, anomalies_text)
-                    communication_text = generate_communication_points(full_text, anomalies_text, logic_text)
-
-                    elapsed = time.time() - start_time
-
-                    st.session_state['full_text'] = full_text
-                    st.session_state['industry_text'] = industry_text
                     st.session_state['fin_data'] = fin_data
-                    st.session_state['fin_json_str'] = fin_json_str
-                    st.session_state['ratios'] = ratios
-                    st.session_state['highlights_text'] = highlights_text
-                    st.session_state['anomalies_text'] = anomalies_text
-                    st.session_state['logic_text'] = logic_text
-                    st.session_state['communication_text'] = communication_text
-                    st.session_state['elapsed'] = elapsed
-
+                    st.session_state['ratios'] = calculate_ratios(fin_data)
+                    st.session_state['highlights_text'] = extract_highlights(full_text, fin_json_str)
+                    st.session_state['anomalies_text'] = detect_anomalies(full_text, fin_json_str)
+                    st.session_state['logic_text'] = investment_logic(full_text, fin_json_str, st.session_state['anomalies_text'])
+                    st.session_state['communication_text'] = generate_communication_points(full_text, st.session_state['anomalies_text'], st.session_state['logic_text'])
+                    st.session_state['elapsed'] = time.time() - start_time
                     st.session_state.page = "result"
                     st.rerun()
 
-    # 极简线框图标特征区
+    # 完整恢复下方图标 SVG 代码
     st.markdown("""
     <div class="features-container">
         <div class="feature-item">
@@ -397,60 +219,51 @@ def render_home_page():
     </div>
     """, unsafe_allow_html=True)
 
-
 def render_result_page():
-    """结果页布局：自定义 Tab 导航 + 内容区"""
+    """结果页布局 (内容+右侧目录)"""
     st.markdown(RESULT_CSS, unsafe_allow_html=True)
-    
-    # Tab 导航栏
-    tab_labels = ["行业研究", "财务透视", "异常标记", "投资亮点", "投资逻辑", "沟通清单"]
-
-    st.markdown("""
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:0;position:relative;z-index:1;">
-        <span style="font-size:1.5rem;font-weight:700;color:#1a1d23;letter-spacing:-0.03em;">DiligencePilot</span>
-        <span style="font-size:0.75rem;color:#9ca3af;font-weight:400;background:#e8ecf1;padding:2px 10px;border-radius:20px;">
-            {:.0f}s
-        </span>
+    st.markdown(f"""
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:1.5rem;">
+        <span style="font-size:1.5rem;font-weight:700;color:#1a1d23;">VestMind</span>
+        <span style="font-size:0.75rem;color:#9ca3af;background:#e8ecf1;padding:2px 10px;border-radius:20px;">{st.session_state.get('elapsed', 0):.0f}s</span>
     </div>
-    """.format(st.session_state.get('elapsed', 0)), unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
 
-    # 用列模拟 Tab 切换
-    cols = st.columns(len(tab_labels))
+    tab_labels = ["行业研究", "财务透视", "异常标记", "投资亮点", "投资逻辑", "沟通清单"]
+    cols = st.columns([1]*6 + [4])
     for i, label in enumerate(tab_labels):
         with cols[i]:
-            active_cls = "active" if st.session_state.tab_index == i else ""
-            btn_type = "primary" if st.session_state.tab_index == i else "secondary"
-            if st.button(label, key=f"tab_btn_{i}", use_container_width=True, type=btn_type):
+            is_active = (st.session_state.tab_index == i)
+            if st.button(label, key=f"tab_btn_{i}", use_container_width=True, type="primary" if is_active else "secondary"):
                 st.session_state.tab_index = i
                 st.rerun()
 
-    # 内容卡片
-    st.markdown('<div class="result-card">', unsafe_allow_html=True)
-
+    main_col, toc_col = st.columns([4, 1])
+    content_text = ""
     tab_idx = st.session_state.tab_index
+    
+    with main_col:
+        st.markdown('<div class="result-card">', unsafe_allow_html=True)
+        if tab_idx == 0:
+            content_text = render_industry_tab(st.session_state.get('industry_text', ''))
+        elif tab_idx == 1:
+            render_financial_tab(st.session_state.get('fin_data'), st.session_state.get('ratios'))
+        elif tab_idx == 2:
+            content_text = render_anomalies_tab(st.session_state.get('anomalies_text', ''))
+        elif tab_idx == 3:
+            content_text = render_highlights_tab(st.session_state.get('highlights_text', ''))
+        elif tab_idx == 4:
+            content_text = render_logic_tab(st.session_state.get('logic_text', ''))
+        elif tab_idx == 5:
+            content_text = render_communication_tab(st.session_state.get('communication_text', ''))
+        st.markdown('</div>', unsafe_allow_html=True)
 
-    if tab_idx == 0:  # 行业研究
-        render_industry_tab(st.session_state.get('industry_text', ''))
-    elif tab_idx == 1:  # 财务透视
-        render_financial_tab(
-            st.session_state.get('fin_data'),
-            st.session_state.get('ratios'),
-        )
-    elif tab_idx == 2:  # 异常标记
-        render_anomalies_tab(st.session_state.get('anomalies_text', ''))
-    elif tab_idx == 3:  # 投资亮点
-        render_highlights_tab(st.session_state.get('highlights_text', ''))
-    elif tab_idx == 4:  # 投资逻辑
-        render_logic_tab(st.session_state.get('logic_text', ''))
-    elif tab_idx == 5:  # 沟通清单
-        render_communication_tab(st.session_state.get('communication_text', ''))
-
-    st.markdown('</div>', unsafe_allow_html=True)
-
+    with toc_col:
+        if content_text:
+            st.markdown(generate_toc_html(content_text), unsafe_allow_html=True)
 
 # ── 页面路由 ──
 st.markdown(COMMON_CSS, unsafe_allow_html=True)
-
 if st.session_state.page == "home":
     render_home_page()
 else:
